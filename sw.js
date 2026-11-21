@@ -5,7 +5,7 @@
  *
  * 使い方：アプリのフォルダ（index.html と同じ所）にコピーして、CACHE と FILES を直す
  */
-var CACHE = 'mask-study-v42';   // publish.ps1 が公開のたびに上げる
+var CACHE = 'mask-study-v43';   // publish.ps1 が公開のたびに上げる
 var FILES = [
   './',
   'index.html',
