@@ -164,6 +164,27 @@
   .b-easy{background:#1c2b34; border-color:var(--accent)}
   .doneBox{text-align:center; padding:44px 20px; color:var(--muted)}
 
+  /* 今回の n / 10 問 と 解いた数 */
+  .launch{margin:4px 0 6px; padding:6px 10px; background:var(--panel); border:1px solid var(--line); border-radius:8px}
+  .launchTop{display:flex; align-items:baseline; gap:6px; font-size:13px; color:var(--muted)}
+  .launchTop b{font-size:24px; line-height:1.1; color:var(--txt); font-variant-numeric:tabular-nums}
+  .launchTop em{margin-left:auto; font-style:normal; font-weight:700; color:var(--accent)}
+  .launch .bar{height:6px; border-radius:3px; background:var(--line); overflow:hidden; margin-top:4px}
+  .launch .bar i{display:block; height:100%; background:var(--accent)}
+  .launch.done{border-color:var(--ok)}
+  .launch.done .bar i{background:var(--ok)}
+  .launch.done .launchTop em{color:var(--ok)}
+  .score{display:grid; grid-template-columns:repeat(4,1fr); gap:1px; margin-bottom:6px; background:var(--line);
+    border:1px solid var(--line); border-radius:8px; overflow:hidden}
+  .score > div{min-width:0; padding:4px 2px; background:var(--panel); text-align:center; line-height:1.25}
+  .score span, .score small{display:block; color:var(--muted); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .score b{display:block; font-size:18px; font-variant-numeric:tabular-nums}
+  .score small.goal{color:var(--ok)}
+  .dashTiles{margin-bottom:10px}
+  .dashTiles b{font-size:22px}
+  .dashH{font-size:12px; color:var(--muted); margin:8px 0 2px}
+  .dashToggle button{padding:6px 10px}
+
   /* 長い問題でもスクロール位置に関係なく操作できるよう上下固定 */
   .stickyBar{position:sticky; z-index:6; background:var(--bg)}
   #studyTopBar{top:0; padding:6px 0; margin-bottom:4px; border-bottom:1px solid var(--line); gap:6px}
@@ -257,14 +278,20 @@
   <section class="view" id="view-list">
     <div class="panelBox" id="dashboardBox" style="margin-bottom:14px">
       <div class="row" style="justify-content:space-between; margin-bottom:8px">
-        <h2 style="margin:0; font-size:14px">📊 学習ダッシュボード（着手した問題数）</h2>
-        <div class="viewToggle">
-          <button id="dashWeekBtn">週</button>
-          <button id="dashMonthBtn">月</button>
+        <h2 style="margin:0; font-size:14px">📊 学習ダッシュボード</h2>
+        <div class="viewToggle dashToggle">
+          <button data-range="week">7日</button>
+          <button data-range="month">30日</button>
+          <button data-range="weeks">週ごと</button>
+          <button data-range="months">月ごと</button>
         </div>
       </div>
+      <div class="score dashTiles" id="dashTiles"></div>
+      <div class="dashH" id="dashH1">解いた問題数</div>
       <div id="dashChart"></div>
       <div class="chip" id="dashSummary" style="margin-top:4px"></div>
+      <div class="dashH" id="dashH2">10問達成の回数</div>
+      <div id="dashGoalChart"></div>
     </div>
     <div class="filters">
       <label>科目 <select id="f-科目"><option value="">すべて</option></select></label>
@@ -386,6 +413,8 @@
       <span class="spacer"></span>
       <span class="chip" id="studyProgress"></span>
     </div>
+    <div id="launch"></div>
+    <div class="score" id="score"></div>
     <div id="studyBody">
       <div class="studyHead">
         <div class="studyHeadL">
@@ -475,7 +504,7 @@
   "use strict";
 
   /* ===== 定数・状態 ===== */
-  const APP_VERSION = "v43";   // publish.ps1 が公開のたびに上げる
+  const APP_VERSION = "v44";   // publish.ps1 が公開のたびに上げる
   document.getElementById("appVer").textContent = APP_VERSION;
   document.getElementById("settingsVer").textContent = APP_VERSION;
   /* プロフィールの一覧は公開コードに書かず、GAS から受け取って端末にしまう */
@@ -568,6 +597,7 @@
       if(raw){ const p = JSON.parse(raw); if(p && Array.isArray(p.questions)) state = p; }
     }catch(e){ console.warn(e); }
     state.history = state.history || [];
+    state.goals = Object.assign({ dev:"", byDev:{} }, state.goals || {});
     state.recentTags = Object.assign({ 科目:[], 大分類:[], 中分類:[], 小分類:[] }, state.recentTags || {});
     state.ui = Object.assign({ sz:1, ez:1, saz:1, eaz:1, qtz:1, atz:1, listStatus:"", sortKey:"ID", sortDir:"asc", dashRange:"week" }, state.ui || {});
     state.設定 = Object.assign({ 絞り込み科目:"", 絞り込み大分類:"", 絞り込み中分類:"", 開始ID:null, 学習:0 }, state.設定 || {});
@@ -817,6 +847,7 @@
       state.設定.絞り込み中分類 = s["絞り込み中分類"] || "";
       state.設定.開始ID = (s["開始ID"]==="" || s["開始ID"]==null) ? null : num(s["開始ID"]);
       state.設定.学習 = Math.max(num(state.設定.学習), num(s["学習"]));
+      mergeGoals(s["10問達成"]);
     }
 
     const serverIds = new Set();
@@ -901,7 +932,8 @@
         try{
           const s = state.設定;
           const r = await server("settings", { "絞り込み科目":s.絞り込み科目||"", "絞り込み大分類":s.絞り込み大分類||"",
-            "絞り込み中分類":s.絞り込み中分類||"", "開始ID": s.開始ID==null?"":s.開始ID, "学習": s.学習||0 });
+            "絞り込み中分類":s.絞り込み中分類||"", "開始ID": s.開始ID==null?"":s.開始ID, "学習": s.学習||0,
+            "10問達成": JSON.stringify((state.goals && state.goals.byDev) || {}) });
           if(r && r.ok) state._settingsDirty = false;
           else err = new Error("設定の送信に失敗: " + ((r && r.error) || "不明"));
         }catch(e){ err = e; }
@@ -968,6 +1000,7 @@
     if(state.history.length > 8000) state.history = state.history.slice(-8000);
     state.設定.学習 += 1; state._settingsDirty = true;
     state.lastHistoryIso = isoNow(now);
+    countLaunch(now);
     saveSoon(); flushSoon();
     const label = result === "ng" ? "即復習（×）" : (result === "easy" ? "簡単（○）" : "覚えた（○）");
     toast(label + ` → 次回 ${fmtDT(q.次回実施日)}` +
@@ -1007,6 +1040,7 @@
     $("#studyBody").classList.toggle("hidden", !q);
     $("#studyDone").classList.toggle("hidden", !!q);
     $("#hdrEditBtn").classList.toggle("hidden", !q);
+    paintLaunch(); paintScore();
     $("#modeReviewBtn").classList.toggle("on", studyMode === "review");
     $("#modeFreeBtn").classList.toggle("on", studyMode === "free");
     const free = studyMode === "free";
@@ -1571,65 +1605,173 @@
     });
   }
 
-  /* ===== ダッシュボード（日別・着手した問題数）===== */
-  function dateKeyLocal(ts){
-    const d = new Date(ts);
-    return d.getFullYear() + "-" + p2(d.getMonth()+1) + "-" + p2(d.getDate());
+  /* ===== 解いた数と 10問達成の記録（週は月曜はじまり）===== */
+  function dayKey(ms){ const d = new Date(ms); return d.getFullYear()*10000 + (d.getMonth()+1)*100 + d.getDate(); }
+  function keyDate(k){ return new Date(Math.floor(k/10000), Math.floor(k/100)%100 - 1, k%100); }
+  function weekKey(k){ const x = keyDate(k); x.setDate(x.getDate() - (x.getDay()+6)%7); return dayKey(x.getTime()); }
+  function monthKey(k){ return Math.floor(k/100); }
+  function answeredDaily(){
+    const o = {};
+    state.history.forEach(h=>{ const t = Date.parse(h.実施日時); if(!isNaN(t)){ const k = dayKey(t); o[k] = (o[k]||0) + 1; } });
+    return o;
   }
-  function dashboardData(range){
-    const days = range === "month" ? 30 : 7;
-    const today = new Date(); today.setHours(0,0,0,0);
-    const counts = new Map();
-    state.history.forEach(h=>{
-      const t = Date.parse(h.実施日時);
-      if(isNaN(t)) return;
-      const key = dateKeyLocal(t);
-      counts.set(key, (counts.get(key) || 0) + 1);
+  function goalDaily(){   // 端末ごとの記録を足し合わせる
+    const o = {};
+    Object.values((state.goals && state.goals.byDev) || {}).forEach(m=>{
+      Object.keys(m || {}).forEach(k=>{ o[k] = (o[k]||0) + num(m[k]); });
     });
-    const out = [];
-    for(let i = days - 1; i >= 0; i--){
-      const d = new Date(today.getTime() - i * DAY);
-      out.push({ date: d, count: counts.get(dateKeyLocal(d.getTime())) || 0, isToday: i === 0 });
+    return o;
+  }
+  function statsOf(daily){
+    const today = dayKey(Date.now()), w0 = weekKey(today), m0 = monthKey(today);
+    const weeks = {}, months = {}; let bestDay = 0, total = 0;
+    Object.keys(daily).forEach(key=>{
+      const k = Number(key), n = daily[key];
+      total += n; if(n > bestDay) bestDay = n;
+      const w = weekKey(k), m = monthKey(k);
+      weeks[w] = (weeks[w]||0) + n; months[m] = (months[m]||0) + n;
+    });
+    const mx = o => Object.values(o).reduce((a,v)=> Math.max(a,v), 0);
+    return { today: daily[today]||0, week: weeks[w0]||0, month: months[m0]||0, total,
+      bestDay, bestWeek: mx(weeks), bestMonth: mx(months) };
+  }
+  function scoreHtml(){
+    const a = statsOf(answeredDaily()), g = statsOf(goalDaily());
+    a.total = Math.max(a.total, num(state.設定.学習));   // 古い履歴は端末に残らないので、学習回数の合計も見る
+    const cell = (label, v, sub, gv) => `<div><span>${label}</span><b>${v.toLocaleString()}</b><small>${sub}</small>` +
+      `<small class="goal" title="10問達成の回数">🎯 ${gv.toLocaleString()}回</small></div>`;
+    return cell("今日", a.today, "最高 " + a.bestDay.toLocaleString(), g.today) +
+      cell("今週", a.week, "最高 " + a.bestWeek.toLocaleString(), g.week) +
+      cell("今月", a.month, "最高 " + a.bestMonth.toLocaleString(), g.month) +
+      cell("累計", a.total, "全期間", g.total);
+  }
+  function paintScore(){ const b = $("#score"); if(b) b.innerHTML = scoreHtml(); }
+
+  /* ===== 今回の n / 10 問（開くと 0、1 問ごとに +1。5 分以上離れたら 0 から）===== */
+  const LAUNCH_GOAL = 10, LAUNCH_AWAY = 5*60000;
+  let launch = { n:0, away:0 };
+  const launchKey = () => "gazouMondaiApp.launch." + (profile || "none");
+  function saveLaunch(){ try{ sessionStorage.setItem(launchKey(), JSON.stringify(launch)); }catch(_){} }
+  function paintLaunch(){
+    const el = $("#launch"); if(!el) return;
+    const n = launch.n, sets = Math.floor(n / LAUNCH_GOAL), done = sets > 0;
+    const just = done && n % LAUNCH_GOAL === 0;                       // ちょうど 10・20…問のときは満タンで見せる
+    const goalNow = just ? n : (sets + 1) * LAUNCH_GOAL, rest = goalNow - n;   // 10 問を超えたら次は 20・30…
+    el.className = "launch" + (done ? " done" : "");
+    el.innerHTML = `<div class="launchTop"><span>今回</span><b>${n.toLocaleString()}</b><span>/ ${goalNow} 問</span>` +
+      `<em>${done ? "🎯 目標達成" + (sets > 1 ? " ×" + sets : "") + (just ? "" : "・次まで " + rest + " 問") : "あと " + rest + " 問"}</em></div>` +
+      `<div class="bar"><i style="width:${just ? 100 : (n - sets*LAUNCH_GOAL) / LAUNCH_GOAL * 100}%"></i></div>`;
+  }
+  function leftApp(){ if(!launch.away){ launch.away = Date.now(); saveLaunch(); } }
+  function backToApp(){
+    if(launch.away && Date.now() - launch.away >= LAUNCH_AWAY) launch.n = 0;
+    launch.away = 0; saveLaunch(); paintLaunch();
+  }
+  function setupLaunch(){
+    let x = null;
+    try{ x = JSON.parse(sessionStorage.getItem(launchKey()) || "null"); }catch(_){}
+    launch = { n: (x && x.n) || 0, away: (x && x.away) || 0 };   // 自動更新の読み直しでは数を消さない
+    backToApp();
+  }
+  document.addEventListener("visibilitychange", ()=>{ if(document.visibilityState === "hidden") leftApp(); else backToApp(); });
+  window.addEventListener("pagehide", leftApp);
+  window.addEventListener("pageshow", ()=>{ if(document.visibilityState === "visible") backToApp(); });
+  function devId(){
+    state.goals = state.goals || { dev:"", byDev:{} };
+    state.goals.byDev = state.goals.byDev || {};
+    if(!state.goals.dev) state.goals.dev = "d" + uid();
+    return state.goals.dev;
+  }
+  function countLaunch(now){
+    launch.n += 1; saveLaunch();
+    if(launch.n % LAUNCH_GOAL === 0){   // 10・20・30 問目でそれぞれ 1 回
+      const d = devId(), k = String(dayKey(now));
+      const m = state.goals.byDev[d] = state.goals.byDev[d] || {};
+      m[k] = num(m[k]) + 1;
+      state._settingsDirty = true;
+      const n = launch.n;
+      setTimeout(()=> toast(`🎯 ${n}問 達成！（今日 ${statsOf(goalDaily()).today} 回目）`), 1800);
+    }
+  }
+  // 設定シートの「10問達成」＝ {端末: {日: 回数}}。自分の端末の分は多いほうを残し、ほかの端末の分は受け取る
+  function mergeGoals(raw){
+    if(!raw) return;
+    let o = null; try{ o = typeof raw === "string" ? JSON.parse(raw) : raw; }catch(_){ return; }
+    if(!o || typeof o !== "object") return;
+    const mine = devId();
+    Object.keys(o).forEach(d=>{
+      const src = o[d] || {}, dst = state.goals.byDev[d] = state.goals.byDev[d] || {};
+      Object.keys(src).forEach(k=>{
+        dst[k] = d === mine ? Math.max(num(dst[k]), num(src[k])) : num(src[k]);
+      });
+    });
+  }
+
+  /* ===== ダッシュボード（解いた問題数・10問達成の回数）===== */
+  function dashSeries(range, daily){
+    const today = dayKey(Date.now()), WD = ["日","月","火","水","木","金","土"], out = [];
+    const sumBy = f => { const o = {}; Object.keys(daily).forEach(k=>{ const g = f(Number(k)); o[g] = (o[g]||0) + daily[k]; }); return o; };
+    if(range === "weeks"){
+      const by = sumBy(weekKey), d = keyDate(weekKey(today));
+      for(let i = 11; i >= 0; i--){
+        const x = new Date(d); x.setDate(x.getDate() - i*7); const k = dayKey(x.getTime());
+        out.push({ count: by[k]||0, cur: i === 0, lbl: `${x.getMonth()+1}/${x.getDate()}`, sub: i === 0 ? "今週" : "", tip: `${x.getMonth()+1}/${x.getDate()} からの週` });
+      }
+    }else if(range === "months"){
+      const by = sumBy(monthKey), now = new Date();
+      for(let i = 11; i >= 0; i--){
+        const x = new Date(now.getFullYear(), now.getMonth() - i, 1), k = x.getFullYear()*100 + x.getMonth() + 1;
+        out.push({ count: by[k]||0, cur: i === 0, lbl: `${x.getMonth()+1}月`, sub: (i === 11 || x.getMonth() === 0) ? String(x.getFullYear()) : "", tip: `${x.getFullYear()}年${x.getMonth()+1}月` });
+      }
+    }else{
+      const days = range === "month" ? 30 : 7, t = keyDate(today);
+      for(let i = days - 1; i >= 0; i--){
+        const x = new Date(t); x.setDate(x.getDate() - i); const k = dayKey(x.getTime());
+        const show = days === 7 || i % 5 === 0;
+        out.push({ count: daily[k]||0, cur: i === 0, lbl: show ? (days === 7 ? `${x.getMonth()+1}/${x.getDate()}` : `${x.getDate()}`) : "",
+          sub: days === 7 ? `(${WD[x.getDay()]})` : "", tip: `${x.getMonth()+1}/${x.getDate()}(${WD[x.getDay()]})` });
+      }
     }
     return out;
   }
-  function renderDashboard(){
-    const range = state.ui.dashRange || "week";
-    $("#dashWeekBtn").classList.toggle("active", range === "week");
-    $("#dashMonthBtn").classList.toggle("active", range !== "week");
-    const data = dashboardData(range);
-    const n = data.length;
-    const max = Math.max(1, ...data.map(d => d.count));
-    const W = 600, H = 170, padL = 6, padR = 6, padTop = 22, padBottom = 26;
-    const plotW = W - padL - padR, plotH = H - padTop - padBottom;
-    const gap = range === "week" ? 10 : 3;
-    const barW = Math.max(2, (plotW - gap * (n - 1)) / n);
-    const WD = ["日","月","火","水","木","金","土"];
-    let bars = "", labels = "";
+  function barsSvg(data, color, unit, H){
+    const n = data.length, max = Math.max(1, ...data.map(d => d.count));
+    const W = Math.max(300, Math.round(($("#dashChart") || {}).clientWidth || 600));   // 画面の幅で描く（スマホでも文字が小さくならない）
+    const padL = 6, padR = 6, padTop = 18, padBottom = 26, plotW = W - padL - padR, plotH = H - padTop - padBottom;
+    const gap = n <= 12 ? 8 : 3, barW = Math.max(2, (plotW - gap*(n-1)) / n);
+    let maxShown = false;
+    let s = `<line x1="${padL}" x2="${W-padR}" y1="${padTop+plotH+0.5}" y2="${padTop+plotH+0.5}" stroke="var(--line)"></line>`;
     data.forEach((d, i)=>{
-      const x = padL + i * (barW + gap);
-      const h = d.count ? Math.max(3, (d.count / max) * plotH) : 1;
-      const y = padTop + (plotH - h);
-      const color = d.isToday ? "var(--accent)" : "var(--ok)";
-      bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color}"></rect>`;
-      if(d.count > 0){
-        bars += `<text x="${(x + barW/2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--muted)">${d.count}</text>`;
-      }
-      const showLabel = range === "week" || i % 5 === 0 || i === n - 1;
-      if(showLabel){
-        const lbl = range === "week" ? `${d.date.getMonth()+1}/${d.date.getDate()}` : `${d.date.getDate()}`;
-        labels += `<text x="${(x + barW/2).toFixed(1)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="var(--muted)">${lbl}</text>`;
-        if(range === "week"){
-          labels += `<text x="${(x + barW/2).toFixed(1)}" y="${H - 1}" text-anchor="middle" font-size="9" fill="var(--muted)">(${WD[d.date.getDay()]})</text>`;
-        }
-      }
+      const x = padL + i*(barW + gap), cx = (x + barW/2).toFixed(1);
+      const h = d.count ? Math.max(3, d.count / max * plotH) : 0, y = padTop + plotH - h;
+      s += `<g><title>${d.tip}：${d.count.toLocaleString()}${unit}</title>` +
+        `<rect x="${x.toFixed(1)}" y="${padTop}" width="${barW.toFixed(1)}" height="${plotH}" fill="transparent"></rect>`;
+      if(h) s += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="3" fill="${color}" opacity="${d.cur ? 1 : .6}"></rect>`;
+      const topLbl = d.count === max && !maxShown;   // 一番高い棒は 1 本だけ数字を出す
+      if(topLbl) maxShown = true;
+      if(d.count && (n <= 12 || topLbl || d.cur))
+        s += `<text x="${cx}" y="${(y - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--muted)">${d.count}</text>`;
+      s += `</g>`;
+      if(d.lbl) s += `<text x="${cx}" y="${H - 13}" text-anchor="middle" font-size="10" fill="${d.cur ? "var(--txt)" : "var(--muted)"}">${d.lbl}</text>`;
+      if(d.sub) s += `<text x="${cx}" y="${H - 2}" text-anchor="middle" font-size="9" fill="var(--muted)">${d.sub}</text>`;
     });
-    $("#dashChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:150px; display:block">${bars}${labels}</svg>`;
-    const total = data.reduce((a, d) => a + d.count, 0);
-    const avg = (total / n).toFixed(1);
-    const label = range === "week" ? "直近7日間" : "直近30日間";
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%; height:${H}px; display:block">${s}</svg>`;
+  }
+  function renderDashboard(){
+    let range = state.ui.dashRange || "week";
+    if(!["week","month","weeks","months"].includes(range)) range = "week";
+    document.querySelectorAll(".dashToggle button").forEach(b => b.classList.toggle("active", b.dataset.range === range));
+    $("#dashTiles").innerHTML = scoreHtml();
+    const data = dashSeries(range, answeredDaily()), gdata = dashSeries(range, goalDaily());
+    const unitName = { week:"日", month:"日", weeks:"週", months:"月" }[range];
+    $("#dashH1").textContent = `解いた問題数（${unitName}ごと）`;
+    $("#dashH2").textContent = `🎯 10問達成の回数（${unitName}ごと）`;
+    $("#dashChart").innerHTML = barsSvg(data, "var(--accent)", "問", 170);
+    $("#dashGoalChart").innerHTML = barsSvg(gdata, "var(--ok)", "回", 120);
+    const total = data.reduce((a, d) => a + d.count, 0), gtotal = gdata.reduce((a, d) => a + d.count, 0);
+    const label = { week:"直近7日間", month:"直近30日間", weeks:"直近12週", months:"直近12か月" }[range];
     $("#dashSummary").textContent = total > 0
-      ? `${label}の合計 ${total}問 ／ 平均 ${avg}問/日`
+      ? `${label}：解いた ${total.toLocaleString()}問（平均 ${(total / data.length).toFixed(1)}問/${unitName}）・10問達成 ${gtotal}回`
       : `${label}はまだ学習記録がありません。復習・自由学習を始めてみましょう！`;
   }
 
@@ -1867,8 +2009,9 @@
 
   // 一覧表示の切り替え
   $("#listMoreBtn").addEventListener("click", ()=>{ listLimit += LIST_STEP; renderList(); });
-  $("#dashWeekBtn").addEventListener("click",()=>{ state.ui.dashRange = "week"; save(); renderDashboard(); });
-  $("#dashMonthBtn").addEventListener("click", ()=>{ state.ui.dashRange = "month"; save(); renderDashboard(); });
+  document.querySelectorAll(".dashToggle button").forEach(b => b.addEventListener("click", ()=>{ state.ui.dashRange = b.dataset.range; save(); renderDashboard(); }));
+  let dashResizeT = null;
+  window.addEventListener("resize", ()=>{ clearTimeout(dashResizeT); dashResizeT = setTimeout(()=>{ if(view === "list") renderDashboard(); }, 300); });
 
   // テーブルのソート
   document.querySelectorAll(".dataTable th[data-sort]").forEach(th=>{
@@ -2119,6 +2262,7 @@
     curId = null; editId = null; draft = null; freeIds = []; freeIdx = 0;
     $("#profileName").textContent = currentProfileName();
     load();
+    setupLaunch();
     fillSelectors();
     applyZoom();
     showView("list");

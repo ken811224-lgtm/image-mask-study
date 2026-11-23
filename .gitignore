@@ -1,1 +1,6 @@
 publish.ps1
+README.md
+gas/
+旧版/
+docs/
+.claude/
